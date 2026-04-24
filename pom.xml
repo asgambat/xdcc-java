@@ -100,10 +100,7 @@
                 <artifactId>native-maven-plugin</artifactId>
                 <configuration>
                     <buildArgs combine.children="append">
-                        <buildArg>--gc=serial</buildArg>
-                        <buildArg>-J-Xmx2g</buildArg>
-                        <buildArg>-J-Xms512m</buildArg>
-                        <buildArg>-Ob</buildArg>
+                        <buildArg>-H:Optimize=1</buildArg>
                         <buildArg>-H:+ReportExceptionStackTraces</buildArg>
                         <buildArg>--enable-url-protocols=http,https</buildArg>
                     </buildArgs>
