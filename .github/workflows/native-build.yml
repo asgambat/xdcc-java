@@ -18,7 +18,15 @@ jobs:
           distribution: 'graalvm-community'
 
       - name: Build native image
-        run: mvn package -Dpackaging=native-image -DskipTests
+        run: |
+          mvn package -Dpackaging=native-image -DskipTests \
+            -Dnative.buildArgs="--strict-image-heap -march=armv8-a -O2"
+
+      - name: Strip debug symbols
+        run: strip --strip-all target/xdcc-java
+
+      - name: Show binary size
+        run: ls -lh target/xdcc-java
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
