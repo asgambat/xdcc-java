@@ -17,6 +17,9 @@ public class DlCommand implements Runnable {
     @Parameters(index = "0", description = "XDCC message (e.g. /msg BotName xdcc send #42)")
     private String message;
 
+    @CommandLine.Option(names = {"--no-pack-limit"}, description = "Disable the pack range limit (default max: 20)", defaultValue = "false")
+    private boolean noPackLimit;
+
     @CommandLine.Mixin
     private DownloadOptionsMixin dlOpts;
 
@@ -27,8 +30,9 @@ public class DlCommand implements Runnable {
     public void run() {
         List<XdccPack> packs;
         try {
+            int maxRange = noPackLimit ? 0 : 20;
             packs = XdccMessageParser.parse(message,
-                    dlOpts.out.isEmpty() ? null : dlOpts.out, dlOpts.server);
+                    dlOpts.out.isEmpty() ? null : dlOpts.out, dlOpts.server, maxRange);
         } catch (IllegalArgumentException e) {
             System.err.println("Error: " + e.getMessage());
             System.exit(1);

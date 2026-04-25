@@ -26,6 +26,14 @@ public class XdccMessageParser {
      * server defaults to "irc.rizon.net" if empty; directory defaults to ".".
      */
     public static List<XdccPack> parse(String msg, String directory, String server) throws IllegalArgumentException {
+        return parse(msg, directory, server, 20);
+    }
+
+    /**
+     * Parses an XDCC message and returns one XDCCPack per requested pack number.
+     * @param maxRange maximum allowed range size (0 or negative = unlimited)
+     */
+    public static List<XdccPack> parse(String msg, String directory, String server, int maxRange) throws IllegalArgumentException {
         if (msg == null || msg.isBlank()) {
             throw new IllegalArgumentException("Empty XDCC message");
         }
@@ -65,8 +73,8 @@ public class XdccMessageParser {
             }
             int end = Integer.parseInt(rangeStr);
             if (step <= 0) step = 1;
-            if (end - firstPack > 10_000) {
-                throw new IllegalArgumentException("Pack range too large (max 10000): " + firstPack + "-" + end);
+            if (maxRange > 0 && end - firstPack > maxRange) {
+                throw new IllegalArgumentException("Pack range too large (max " + maxRange + "): " + firstPack + "-" + end + ". Use --no-pack-limit to override.");
             }
             for (int i = firstPack; i <= end; i += step) {
                 packNumbers.add(i);
