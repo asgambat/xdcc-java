@@ -11,6 +11,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Manages a DCC file transfer over a TCP socket.
+ *
+ * <p>Runs the actual TCP receive loop in a virtual thread. Spawns additional
+ * virtual threads for stall detection and progress display.
+ *
+ * <p>DCC protocol requires sending ACK bytes after each chunk received:
+ * 4-byte big-endian for files ≤ 4GB, 8-byte for larger files.
  */
 public class DccTransfer {
 
@@ -68,6 +74,15 @@ public class DccTransfer {
         // Ensure parent dirs exist
         File parent = file.getParentFile();
         if (parent != null) parent.mkdirs();
+
+        // Atomically check if file is already fully downloaded
+        if (file.exists() && file.length() >= remoteFileSize) {
+            errorRef.set(XdccError.ALREADY_DOWNLOADED);
+            startedLatch.countDown();
+            doneLatch.countDown();
+            try { socket.close(); } catch (IOException ignored) {}
+            return;
+        }
 
         FileOutputStream fos;
         try {
@@ -143,6 +158,7 @@ public class DccTransfer {
         }
     }
 
+    /** Token-bucket style throttle: sleeps if data arrived faster than the configured limit. */
     private long throttle(long throttleBytes, long chunkStart, long chunkBytes) {
         long elapsed = System.nanoTime() - chunkStart;
         long expectedNs = (long) ((double) chunkBytes / throttleBytes * 1_000_000_000L);
@@ -156,6 +172,10 @@ public class DccTransfer {
         return System.nanoTime();
     }
 
+    /**
+     * Sends a DCC acknowledgment: the total bytes received so far, as a big-endian integer.
+     * Per DCC protocol: 4 bytes if total ≤ 4GB, 8 bytes otherwise.
+     */
     private void sendAck(OutputStream out, long progressVal) throws IOException {
         byte[] ack;
         if (progressVal <= 0xFFFFFFFFL) {
@@ -171,6 +191,7 @@ public class DccTransfer {
         out.flush();
     }
 
+    /** Monitors transfer activity; closes socket if no data received for stallTimeout seconds. */
     private void stallWatcher() {
         int stallTimeout = opts.getStallTimeout();
         while (!done && errorRef.get() == null) {

@@ -65,6 +65,9 @@ public class XdccMessageParser {
             }
             int end = Integer.parseInt(rangeStr);
             if (step <= 0) step = 1;
+            if (end - firstPack > 10_000) {
+                throw new IllegalArgumentException("Pack range too large (max 10000): " + firstPack + "-" + end);
+            }
             for (int i = firstPack; i <= end; i += step) {
                 packNumbers.add(i);
             }

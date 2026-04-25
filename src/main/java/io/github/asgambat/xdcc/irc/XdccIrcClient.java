@@ -12,6 +12,26 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
+/**
+ * Core XDCC download orchestrator — implements the full XDCC/DCC protocol flow.
+ * Library-agnostic: communicates with IRC via {@link IrcClient} and receives events
+ * via {@link IrcEventHandler} callbacks.
+ *
+ * <h3>Download flow per pack:</h3>
+ * <ol>
+ *   <li>WHOIS the bot → discover which channels the bot is on</li>
+ *   <li>Join those channels (required by most bots to accept XDCC requests)</li>
+ *   <li>Send XDCC request (e.g. "xdcc send #42")</li>
+ *   <li>Bot responds with DCC SEND CTCP → we parse IP, port, filesize</li>
+ *   <li>If partial file exists → send DCC RESUME, wait for DCC ACCEPT</li>
+ *   <li>Open TCP connection to bot's DCC port → receive file data with ACK</li>
+ * </ol>
+ *
+ * <h3>Concurrency model:</h3>
+ * <p>Uses {@link CountDownLatch} pairs to synchronize the event-driven IRC callbacks
+ * with the sequential download logic. Each pack has a "started" and "done" latch.
+ * Virtual threads handle DCC transfers and delayed operations.</p>
+ */
 public class XdccIrcClient implements IrcEventHandler {
 
     private final List<XdccPack> packs;
@@ -123,13 +143,13 @@ public class XdccIrcClient implements IrcEventHandler {
 
         try {
             PackResult result = waitForCurrentPack(pack);
-            if (result.error() != null && result.error().is(XdccError.Kind.PACK_ALREADY_REQUESTED)) {
+            if (result instanceof PackResult.Failure f && f.error().is(XdccError.Kind.PACK_ALREADY_REQUESTED)) {
                 System.out.println("Pack already requested, waiting 60s...");
                 try { Thread.sleep(60000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 return downloadPackAtIndex(index, retryCount);
             }
-            if (result.error() != null &&
-                    (result.error().is(XdccError.Kind.TIMEOUT) || result.error().is(XdccError.Kind.DOWNLOAD_FAILED))
+            if (result instanceof PackResult.Failure f &&
+                    (f.error().is(XdccError.Kind.TIMEOUT) || f.error().is(XdccError.Kind.DOWNLOAD_FAILED))
                     && retryCount < 3) {
                 System.out.println("Retrying pack #" + pack.getPackNumber() + " (attempt " + (retryCount + 1) + ")...");
                 try { reconnect(); } catch (Exception ignored) {}
@@ -141,6 +161,11 @@ public class XdccIrcClient implements IrcEventHandler {
         }
     }
 
+    /**
+     * Waits for a pack download in two phases:
+     * Phase 1: wait for DCC transfer to start (connect timeout + wait time + 30s buffer)
+     * Phase 2: wait for transfer to complete (up to 24h for large files)
+     */
     private PackResult waitForCurrentPack(XdccPack pack) throws InterruptedException {
         int phase1Timeout = opts.getConnectTimeout() + opts.getWaitTime() + 30;
         boolean transferStarted = downloadStartedLatch.await(phase1Timeout, TimeUnit.SECONDS);
@@ -173,9 +198,17 @@ public class XdccIrcClient implements IrcEventHandler {
     private void reconnect() throws InterruptedException {
         try { ircClient.shutdown("Reconnecting"); } catch (Exception ignored) {}
         Thread.sleep(3000);
-        try { ircClient.connect(connectionConfig); } catch (XdccError ignored) {}
+        try {
+            ircClient.connect(connectionConfig);
+        } catch (XdccError e) {
+            System.err.println("[irc] Reconnection failed: " + e.getMessage());
+        }
     }
 
+    /**
+     * Ensures the XDCC request is sent only once per pack (uses CAS on {@code messageSent}).
+     * Respects the --wait-time option by delaying in a virtual thread if needed.
+     */
     private void sendXdccRequest(XdccPack pack) {
         if (!messageSent.compareAndSet(false, true)) return;
 
@@ -192,6 +225,15 @@ public class XdccIrcClient implements IrcEventHandler {
         }
     }
 
+    /**
+     * Parses a DCC SEND message and initiates the file transfer.
+     * Format: "SEND <filename> <ip_as_long> <port> <filesize>"
+     *
+     * <p>The IP is typically sent as a 32-bit integer (e.g. 3232235777 = 192.168.1.1).
+     * If IP is 0, the sender's hostname from the CTCP message is used instead (passive DCC).
+     *
+     * <p>If a partial file already exists, initiates DCC RESUME instead of starting fresh.
+     */
     private void handleDccSend(String senderNick, String senderHost, String dccParams) {
         // DCC SEND <filename> <ip> <port> <size>
         String[] parts = splitDCC(dccParams.substring("SEND ".length()));
@@ -234,16 +276,8 @@ public class XdccIrcClient implements IrcEventHandler {
         }
         pack.setSize(filesize);
 
-        // Check if already downloaded
-        File f = new File(pack.getFilepath());
-        if (f.exists() && f.length() >= filesize) {
-            downloadErrorRef.set(XdccError.ALREADY_DOWNLOADED);
-            downloadStartedLatch.countDown();
-            downloadDoneLatch.countDown();
-            return;
-        }
-
         // Resume if partial file
+        File f = new File(pack.getFilepath());
         long resumePos = 0;
         if (f.exists() && f.length() > 0 && f.length() < filesize) {
             resumePos = f.length();
@@ -258,6 +292,11 @@ public class XdccIrcClient implements IrcEventHandler {
         startDccTransfer(pack, remoteIp, port, filesize, 0);
     }
 
+    /**
+     * Handles DCC ACCEPT response after we requested a resume.
+     * Format: "ACCEPT <filename> <port> <resume_position>"
+     * Resumes the transfer from the acknowledged position.
+     */
     private void handleDccAccept(String dccParams) {
         if (!resumePending) return;
         // DCC ACCEPT <filename> <port> <position>
@@ -273,6 +312,11 @@ public class XdccIrcClient implements IrcEventHandler {
         startDccTransfer(pack, resumeRemoteIp, resumePort, pack.getSize(), acceptedPos);
     }
 
+    /**
+     * Launches the TCP DCC transfer in a virtual thread.
+     * Wires the DccTransfer's latches to our per-pack download latches so
+     * {@link #waitForCurrentPack} can block until the transfer completes.
+     */
     private void startDccTransfer(XdccPack pack, String remoteIp, int port, long filesize, long resumePos) {
         DccTransfer transfer = new DccTransfer(pack, remoteIp, port, filesize, resumePos, opts, verbosity);
         transfer.start();
@@ -316,6 +360,11 @@ public class XdccIrcClient implements IrcEventHandler {
         return channelName;
     }
 
+    /**
+     * Two-phase DNS resolution: first tries system DNS, then falls back to
+     * a raw UDP DNS query (RFC 1035) to avoid dependency on dnsjava.
+     * The raw fallback is needed because some ISPs block/redirect DNS for IRC servers.
+     */
     private String resolveHost(String host) throws XdccError {
         // Attempt 1: system DNS
         try {
@@ -394,11 +443,13 @@ public class XdccIrcClient implements IrcEventHandler {
 
     /** Parses the first A record from a DNS response packet. Returns null if none found. */
     private static String parseFirstARecord(byte[] response, int length) throws IOException {
+        if (length < 12) return null; // minimum DNS header size
         DataInputStream dis = new DataInputStream(new ByteArrayInputStream(response, 0, length));
         dis.skipBytes(4);                           // ID + flags
         int qdcount = dis.readUnsignedShort();
         int ancount = dis.readUnsignedShort();
         dis.skipBytes(4);                           // NSCOUNT + ARCOUNT
+        if (qdcount > 100 || ancount > 100) return null; // sanity check
         // Skip question section
         for (int i = 0; i < qdcount; i++) {
             skipDnsName(response, dis);
@@ -410,6 +461,7 @@ public class XdccIrcClient implements IrcEventHandler {
             int type     = dis.readUnsignedShort(); // TYPE
             dis.skipBytes(6);                       // CLASS + TTL
             int rdlength = dis.readUnsignedShort();
+            if (rdlength < 0 || rdlength > length) return null; // malformed
             if (type == 1 && rdlength == 4) {       // A record
                 byte[] addr = new byte[4];
                 dis.readFully(addr);
@@ -449,6 +501,10 @@ public class XdccIrcClient implements IrcEventHandler {
         return sb.toString();
     }
 
+    /**
+     * Splits DCC parameters respecting quoted filenames.
+     * E.g. {@code "My File.mkv" 1234567 6667 99999} → ["My File.mkv", "1234567", "6667", "99999"]
+     */
     private static String[] splitDCC(String s) {
         List<String> parts = new ArrayList<>();
         boolean inQuote = false;
@@ -537,6 +593,11 @@ public class XdccIrcClient implements IrcEventHandler {
         }
     }
 
+    /**
+     * WHOIS response handler — discovers which channels the bot is on, joins them,
+     * then sends the XDCC request once all channels are joined.
+     * Falls back to --fallback-channel if WHOIS returns no channels.
+     */
     @Override
     public void onWhoisChannels(String nick, Set<String> channels) {
         XdccPack pack = packs.get(currentPackIndex);

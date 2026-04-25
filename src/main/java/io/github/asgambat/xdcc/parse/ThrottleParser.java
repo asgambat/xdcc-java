@@ -48,7 +48,9 @@ public class ThrottleParser {
         }
         try {
             long value = Long.parseLong(numPart);
-            return value * multiplier;
+            return Math.multiplyExact(value, multiplier);
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("Value too large: " + s);
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Invalid byte string: " + s);
         }

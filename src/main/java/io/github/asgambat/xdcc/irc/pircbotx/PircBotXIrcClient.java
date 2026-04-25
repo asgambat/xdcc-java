@@ -18,6 +18,19 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * PircBotX-based IRC client implementation.
+ *
+ * <p>Key challenge: PircBotX handles DCC CTCP messages internally via its {@code DccHandler},
+ * which would open its own DCC connections. We need to intercept DCC SEND/ACCEPT messages
+ * before PircBotX processes them, so our own {@link XdccIrcClient} can manage the DCC transfer.
+ *
+ * <p>Solution: inject a {@link CustomBotFactory} that produces an {@link InterceptingDccHandler},
+ * which overrides {@code processDcc()} to capture SEND/ACCEPT and delegate to our
+ * {@link IrcEventHandler#onCtcpMessage}.
+ *
+ * <p>Note: {@code PircBotX.startBot()} is blocking, so it runs in a virtual thread.
+ */
 public class PircBotXIrcClient implements IrcClient {
     private volatile PircBotX bot;
     private volatile IrcEventHandler handler;
@@ -101,7 +114,11 @@ public class PircBotXIrcClient implements IrcClient {
         }
     }
 
-    // Intercepts DCC messages before PircBotX's internal handler processes them
+    /**
+     * Intercepts DCC CTCP messages (SEND, ACCEPT) before PircBotX's default handler
+     * opens its own DCC connections. Passes the parsed content to our IrcEventHandler.
+     * Non-DCC-SEND/ACCEPT messages (e.g. DCC CHAT) fall through to PircBotX's default behavior.
+     */
     private class InterceptingDccHandler extends DccHandler {
         public InterceptingDccHandler(PircBotX bot) {
             super(bot);
@@ -123,6 +140,7 @@ public class PircBotXIrcClient implements IrcClient {
         }
     }
 
+    /** Replaces PircBotX's default BotFactory to inject our InterceptingDccHandler. */
     private class CustomBotFactory extends Configuration.BotFactory {
         @Override
         public DccHandler createDccHandler(PircBotX bot) {
@@ -130,6 +148,7 @@ public class PircBotXIrcClient implements IrcClient {
         }
     }
 
+    /** Bridges PircBotX library events to our library-agnostic IrcEventHandler. */
     private class EventBridge extends ListenerAdapter {
         @Override
         public void onConnect(ConnectEvent event) {

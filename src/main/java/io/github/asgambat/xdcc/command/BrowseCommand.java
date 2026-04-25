@@ -3,10 +3,10 @@ package io.github.asgambat.xdcc.command;
 import io.github.asgambat.xdcc.domain.XdccPack;
 import io.github.asgambat.xdcc.downloader.XdccDownloader;
 import io.github.asgambat.xdcc.irc.DownloadOptions;
-import io.github.asgambat.xdcc.parse.ThrottleParser;
 import io.github.asgambat.xdcc.parse.XdccMessageParser;
 import io.github.asgambat.xdcc.search.SearchEngine;
 import jakarta.inject.Inject;
+import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -34,51 +34,8 @@ public class BrowseCommand implements Runnable {
     @Option(names = {"-b", "--bot"}, description = "Filter by bot name substring (case-insensitive)", defaultValue = "")
     private String bot;
 
-    // Download options
-    @Option(names = {"-s", "--server"}, description = "IRC server override", defaultValue = "irc.rizon.net")
-    private String server;
-
-    @Option(names = {"-o", "--out"}, description = "Output directory or file", defaultValue = "")
-    private String out;
-
-    @Option(names = {"-t", "--throttle"}, description = "Speed limit", defaultValue = "-1")
-    private String throttle;
-
-    @Option(names = {"-c", "--connect-timeout"}, description = "Connect timeout seconds", defaultValue = "120")
-    private int connectTimeout;
-
-    @Option(names = {"-S", "--stall-timeout"}, description = "Stall timeout seconds", defaultValue = "60")
-    private int stallTimeout;
-
-    @Option(names = {"-f", "--fallback-channel"}, description = "Fallback channel", defaultValue = "")
-    private String fallbackChannel;
-
-    @Option(names = {"-w", "--wait-time"}, description = "Wait time before XDCC request", defaultValue = "0")
-    private int waitTime;
-
-    @Option(names = {"-u", "--username"}, description = "IRC nick", defaultValue = "")
-    private String username;
-
-    @Option(names = {"-d", "--channel-join-delay"}, description = "Channel join delay", defaultValue = "-1")
-    private int channelJoinDelay;
-
-    @Option(names = {"--dns-server"}, description = "Fallback DNS server", defaultValue = "")
-    private String dnsServer;
-
-    @Option(names = {"-v"}, description = "Verbose", defaultValue = "false")
-    private boolean v;
-
-    @Option(names = {"-vv"}, description = "Very verbose", defaultValue = "false")
-    private boolean vv;
-
-    @Option(names = {"-q"}, description = "Quiet", defaultValue = "false")
-    private boolean q;
-
-    @Option(names = {"-qq"}, description = "Very quiet", defaultValue = "false")
-    private boolean qq;
-
-    @Option(names = {"--irc-library"}, description = "IRC library to use: pircbotx or kitteh (default: pircbotx)", defaultValue = "pircbotx")
-    private String ircLibrary;
+    @CommandLine.Mixin
+    private DownloadOptionsMixin dlOpts;
 
     @Inject
     private Collection<SearchEngine> engines;
@@ -148,28 +105,13 @@ public class BrowseCommand implements Runnable {
         List<XdccPack> selected = promptSelection(results);
         if (selected.isEmpty()) return;
 
-        int verbosity = vv ? 2 : v ? 1 : qq ? -2 : q ? -1 : 0;
-
         // Apply output path
-        if (!out.isEmpty()) {
-            XdccMessageParser.preparePacks(selected, out);
+        if (!dlOpts.out.isEmpty()) {
+            XdccMessageParser.preparePacks(selected, dlOpts.out);
         }
 
-        DownloadOptions opts = new DownloadOptions();
-        opts.setConnectTimeout(connectTimeout);
-        opts.setStallTimeout(stallTimeout);
-        opts.setFallbackChannel(fallbackChannel);
-        opts.setWaitTime(waitTime);
-        opts.setUsername(username);
-        opts.setChannelJoinDelay(channelJoinDelay);
-        opts.setVerbosity(verbosity);
-        opts.setIrcLibrary(ircLibrary);
-        if (dnsServer != null && !dnsServer.isEmpty()) opts.setDnsServer(dnsServer);
-        try {
-            opts.setThrottleBytes(ThrottleParser.parseThrottle(throttle));
-        } catch (IllegalArgumentException e) {
-            System.err.println("Invalid throttle: " + throttle);
-        }
+        DownloadOptions opts = dlOpts.buildOptions();
+        if (opts == null) return;
 
         downloader.downloadPacks(selected, opts);
     }

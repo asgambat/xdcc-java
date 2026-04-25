@@ -17,6 +17,21 @@ import org.kitteh.irc.client.library.exception.KittehNagException;
 
 import java.util.Set;
 
+/**
+ * KittehIRCClientLib-based IRC client implementation.
+ *
+ * <p>Kitteh uses an event bus (MBassador) — events are received via {@code @Handler} annotations
+ * in the inner {@link KittehEventBridge} class. CTCP messages arrive as
+ * {@link PrivateCtcpQueryEvent} with the full content including "DCC " prefix, which we strip
+ * before forwarding to {@link IrcEventHandler#onCtcpMessage}.
+ *
+ * <p>Quirks handled:
+ * <ul>
+ *   <li>{@code .secure(false)} — Kitteh defaults to SSL/TLS; most XDCC servers use plaintext</li>
+ *   <li>{@link KittehNagException} — thrown when connecting without TLS; suppressed via custom exception handler</li>
+ *   <li>{@code addChannel()} validates channel names — WHOIS may return names with mode prefixes</li>
+ * </ul>
+ */
 public class KittehIrcClient implements IrcClient {
 
     private volatile Client client;
@@ -85,6 +100,7 @@ public class KittehIrcClient implements IrcClient {
         client.shutdown(message);
     }
 
+    /** Bridges Kitteh library events to our library-agnostic IrcEventHandler. */
     private class KittehEventBridge {
 
         @Handler
@@ -112,6 +128,7 @@ public class KittehIrcClient implements IrcClient {
             }
         }
 
+        /** CTCP query handler — intercepts DCC SEND/ACCEPT, strips "DCC " prefix for the handler. */
         @Handler
         public void onPrivateCtcpQuery(PrivateCtcpQueryEvent event) {
             String msg = event.getMessage();

@@ -61,44 +61,44 @@ public class XdccDownloader {
     }
 
     private void printResult(XdccPack pack, PackResult result, int verbosity) {
-        if (result.isSuccess()) {
+        if (result instanceof PackResult.Success) {
             // Already printed by client during transfer
             return;
         }
 
-        XdccError error = result.error();
-        if (error == null) return;
-
-        switch (error.getKind()) {
-            case ALREADY_DOWNLOADED:
-                System.out.println("File already downloaded (skipping): " + pack.getFilename());
-                break;
-            case BOT_DENIED:
-                String notice = result.lastBotNotice();
-                if (notice != null && !notice.isEmpty()) {
-                    System.err.println("Bot denied XDCC request: " + notice);
-                } else {
-                    System.err.println("Bot denied XDCC request for: " + pack.getFilename());
-                }
-                break;
-            case BOT_NOT_FOUND:
-                System.err.println("Bot " + pack.getBot() + " not found on server " + pack.getServer().address());
-                break;
-            case SERVER_UNREACHABLE:
-                System.err.println("Server unreachable (" + pack.getServer().address() + "): " + error.getMessage());
-                System.err.println("Tip: use --server to specify a different server");
-                break;
-            case UNRECOVERABLE:
-                System.err.println("Unrecoverable error (IP banned?). Aborting.");
-                break;
-            case TIMEOUT:
-                System.err.println("Download of pack #" + pack.getPackNumber() + " timed out after all retries");
-                break;
-            case DOWNLOAD_FAILED:
-                System.err.println("Download of " + pack.getFilename() + " failed after all retries");
-                break;
-            default:
-                System.err.println("Error downloading pack " + pack.getPackNumber() + ": " + error.getMessage());
+        if (result instanceof PackResult.Failure failure) {
+            XdccError error = failure.error();
+            switch (error.getKind()) {
+                case ALREADY_DOWNLOADED:
+                    System.out.println("File already downloaded (skipping): " + pack.getFilename());
+                    break;
+                case BOT_DENIED:
+                    String notice = failure.lastBotNotice();
+                    if (!notice.isEmpty()) {
+                        System.err.println("Bot denied XDCC request: " + notice);
+                    } else {
+                        System.err.println("Bot denied XDCC request for: " + pack.getFilename());
+                    }
+                    break;
+                case BOT_NOT_FOUND:
+                    System.err.println("Bot " + pack.getBot() + " not found on server " + pack.getServer().address());
+                    break;
+                case SERVER_UNREACHABLE:
+                    System.err.println("Server unreachable (" + pack.getServer().address() + "): " + error.getMessage());
+                    System.err.println("Tip: use --server to specify a different server");
+                    break;
+                case UNRECOVERABLE:
+                    System.err.println("Unrecoverable error (IP banned?). Aborting.");
+                    break;
+                case TIMEOUT:
+                    System.err.println("Download of pack #" + pack.getPackNumber() + " timed out after all retries");
+                    break;
+                case DOWNLOAD_FAILED:
+                    System.err.println("Download of " + pack.getFilename() + " failed after all retries");
+                    break;
+                default:
+                    System.err.println("Error downloading pack " + pack.getPackNumber() + ": " + error.getMessage());
+            }
         }
     }
 }

@@ -21,6 +21,7 @@ public class XdccPack {
     }
 
     public void setFilename(String filename, boolean override) {
+        if (filename == null) return;
         if (this.filename != null && !this.filename.isEmpty() && !override) {
             // Only add extension if missing
             int dotIdx = filename.indexOf('.');
@@ -98,6 +99,4 @@ public class XdccPack {
 
     // Setters
     public void setServer(IrcServer server) { this.server = server; }
-    public void setBot(String bot) { this.bot = bot; }
-    public void setPackNumber(int packNumber) { this.packNumber = packNumber; }
 }

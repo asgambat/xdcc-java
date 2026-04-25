@@ -2,17 +2,16 @@ package io.github.asgambat.xdcc.domain;
 
 import io.github.asgambat.xdcc.irc.XdccError;
 
-public record PackResult(String filePath, XdccError error, String lastBotNotice) {
+public sealed interface PackResult permits PackResult.Success, PackResult.Failure {
 
-    public boolean isSuccess() {
-        return error == null;
+    record Success(String filePath) implements PackResult {}
+    record Failure(XdccError error, String lastBotNotice) implements PackResult {}
+
+    static PackResult success(String filePath) {
+        return new Success(filePath);
     }
 
-    public static PackResult success(String filePath) {
-        return new PackResult(filePath, null, null);
-    }
-
-    public static PackResult failure(XdccError error, String botNotice) {
-        return new PackResult(null, error, botNotice);
+    static PackResult failure(XdccError error, String botNotice) {
+        return new Failure(error, botNotice != null ? botNotice : "");
     }
 }

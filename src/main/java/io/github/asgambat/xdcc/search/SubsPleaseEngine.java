@@ -69,7 +69,7 @@ public class SubsPleaseEngine implements SearchEngine {
 
             XdccPack pack = new XdccPack(SUBSPLEASE_SERVER, bot, packNum);
             pack.setFilename(filename, true);
-            pack.setSize((long) (sizeMb * 1_000_000));
+            pack.setSize((long) (sizeMb * 1_048_576));
             results.add(pack);
         }
         return results;

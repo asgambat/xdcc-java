@@ -15,10 +15,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @Singleton
 @Named("ixirc")
 public class IxircEngine implements SearchEngine {
 
+    private static final Logger LOG = LoggerFactory.getLogger(IxircEngine.class);
     private static final String BASE_URL = "https://ixirc.com/api/?q=";
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -47,7 +51,10 @@ public class IxircEngine implements SearchEngine {
             }
 
             JsonNode resultArray = root.path("results");
-            if (!resultArray.isArray()) break;
+            if (!resultArray.isArray()) {
+                LOG.warn("ixirc API returned unexpected format: 'results' is not an array (page {})", page);
+                break;
+            }
 
             for (JsonNode item : resultArray) {
                 String uname = item.path("uname").asText("").trim();
